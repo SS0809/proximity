@@ -39,7 +39,6 @@ jobs:
         run: |
           mkdir docs
           mv app/build/outputs/apk/debug/app-debug.apk docs/
-          cp README.md docs/
           cp ./app/src/main/res/mipmap-hdpi/ic_launcher.png docs/
       # Upload the release APK as an artifact
       - name: Upload Release Artifact
