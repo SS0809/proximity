@@ -2,6 +2,7 @@ package com.saurabh.proximity;
 
 import static com.saurabh.proximity.RoadPointFinder.filterPointsByDistance;
 import static com.saurabh.proximity.RoadPointFinder.getPointsForRoad;
+import static com.saurabh.proximity.RoadPointFinder.updateMapWithPoints;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
@@ -159,6 +160,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateLocationUI(Location location) {
+  // TODO HARD CODED STRINGS
+        location.setLatitude(23.25204561436272);
+        location.setLongitude(77.48521347885162);
         String locationText = getString(R.string.location_format,
                 location.getLatitude(),
                 location.getLongitude());
@@ -177,8 +181,9 @@ public class MainActivity extends AppCompatActivity {
                         List<Point> roadPoints = getPointsForRoad(roadName);
 
                         // Step 3: Filter points within 1 km
-                        List<Point> nearbyPoints = filterPointsByDistance(latitude, longitude, roadPoints, 1000);
-
+                        List<Point> nearbyPoints = filterPointsByDistance(latitude, longitude, roadPoints, 1000 );
+                        // Update the map with the nearby points
+                        updateMapWithPoints(mapView, nearbyPoints);
                         // Display nearby points
                         if (!nearbyPoints.isEmpty()) {
                             System.out.println("Nearby Points:");
@@ -280,25 +285,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-
-    private void handleApiResponse(Response response) {
-        try {
-            if (!response.isSuccessful() || response.body() == null) {
-                showError("API Error: " + response.code());
-                return;
-            }
-
-            String responseBody = response.body().string();
-            runOnUiThread(() -> resultTextView.setText(
-                    getString(R.string.response_format, responseBody)));
-
-        } catch (IOException e) {
-            showError("Error reading response: " + e.getMessage());
-        } finally {
-            response.close();
-        }
-    }
-
     private void showError(String message) {
         runOnUiThread(() ->
                 Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
@@ -346,7 +332,7 @@ public class MainActivity extends AppCompatActivity {
         // Add a marker for the current location
         Marker marker = new Marker(mapView);
         marker.setPosition(startPoint);
-        marker.setTitle("Your Location");
+        marker.setTitle("My Location");
         mapView.getOverlays().clear(); // Clear any existing markers
         mapView.getOverlays().add(marker);
     }

@@ -7,6 +7,10 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.osmdroid.util.GeoPoint;
+import org.osmdroid.views.MapView;
+import org.osmdroid.views.overlay.Marker;
+
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
@@ -16,7 +20,7 @@ public class RoadPointFinder {
     private static final List<Point> predefinedPoints = new ArrayList<>();
     // HARD CODED
     static {
-        predefinedPoints.add(new Point("MG Road", 23.252013534717676, 77.48562396944655, 0.0));
+        predefinedPoints.add(new Point("Raisen Road diff", 23.251858252142124, 77.48453767393227, 0.0));
     }
     private static final String OSM_API_URL = "https://nominatim.openstreetmap.org/reverse";
     private static final String USER_AGENT = "YourAppName/1.0"; // Replace with your app name
@@ -136,6 +140,28 @@ public class RoadPointFinder {
             }
         }
         return nearbyPoints;
+    }
+    public static void updateMapWithPoints(MapView mapView, List<Point> points) {
+        if (mapView == null) {
+            throw new IllegalArgumentException("MapView is null");
+        }
+
+        // Add markers for each point
+        for (Point point : points) {
+            if (point == null) continue;
+            GeoPoint geoPoint = new GeoPoint(point.latitude, point.longitude);
+            Marker marker = new Marker(mapView);
+            marker.setPosition(geoPoint);
+            marker.setTitle(String.format("Lat: %.6f, Lon: %.6f", point.latitude, point.longitude));
+            mapView.getOverlays().add(marker);
+        }
+
+        // Adjust map to show all points if needed
+        if (!points.isEmpty()) {
+            GeoPoint firstPoint = new GeoPoint(points.get(0).latitude, points.get(0).longitude);
+            mapView.getController().setZoom(15.0);
+            mapView.getController().setCenter(firstPoint);
+        }
     }
 
     // Haversine formula to calculate the distance between two points

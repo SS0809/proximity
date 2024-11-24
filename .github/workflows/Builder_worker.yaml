@@ -1,0 +1,61 @@
+name: Build & Deploy & Release and Pages builder
+
+on:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  build-and-deploy:
+    name: 'Build app'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Checkout the repository
+      - uses: actions/checkout@v3
+
+      # Set up Java environment
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17' # Use your desired Java version
+
+      - name: Set execute permissions for gradlew
+        run: chmod +x ./gradlew
+
+      # Set up Gradle
+      - name: Set up Gradle
+        uses: gradle/gradle-build-action@v2
+        with:
+          gradle-version: '8.0' # Specify the Gradle version if needed
+
+      # Build the release APK using Gradle
+      - name: Build APK
+        run: ./gradlew build
+
+      # Create a folder for deployment artifacts
+      - name: Prepare Deployment
+        run: |
+          mkdir docs
+          mv app/build/outputs/apk/release/app-release.apk docs/
+          cp README.md docs/
+          cp ./app/src/main/res/mipmap-hdpi/ic_launcher.png docs/
+      # Upload the release APK as an artifact
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-apk
+          path: docs/
+
+      # Copy docs for deployment
+      - name: Prepare Pages Deployment
+        run: |
+          mkdir upload
+          cp -r docs upload/
+      # Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4.6.9
+        with:
+          branch: gh-pages
+          folder: upload
