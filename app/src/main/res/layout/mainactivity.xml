@@ -18,12 +18,6 @@
         android:text="Waiting for location..."
         android:textSize="16sp" />
 
-    <Button
-        android:id="@+id/getLocationButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Get Location" />
-
 
     <Button
         android:id="@+id/invokeButton"
@@ -41,6 +35,14 @@
 
     <TextView
         android:id="@+id/resultTextView2"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:text="Result will appear here"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/speedTextView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="20dp"

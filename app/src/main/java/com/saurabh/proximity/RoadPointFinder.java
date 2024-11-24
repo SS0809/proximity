@@ -7,6 +7,7 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.osmdroid.util.BoundingBox;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
 import org.osmdroid.views.overlay.Marker;
@@ -15,6 +16,8 @@ import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
+
 public class RoadPointFinder {
     private static final String TAG = "RoadFinder";
     private static final List<Point> predefinedPoints = new ArrayList<>();
@@ -158,10 +161,15 @@ public class RoadPointFinder {
 
         // Adjust map to show all points if needed
         if (!points.isEmpty()) {
-            GeoPoint firstPoint = new GeoPoint(points.get(0).latitude, points.get(0).longitude);
-            mapView.getController().setZoom(15.0);
-            mapView.getController().setCenter(firstPoint);
+            BoundingBox boundingBox = BoundingBox.fromGeoPoints(
+                    points.stream()
+                            .map(p -> new GeoPoint(p.latitude, p.longitude))
+                            .collect(Collectors.toList())
+            );
+            mapView.zoomToBoundingBox(boundingBox, true); // Adjust map to fit all points
         }
+
+        mapView.invalidate(); // Refresh the map
     }
 
     // Haversine formula to calculate the distance between two points

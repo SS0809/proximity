@@ -18,6 +18,9 @@ import androidx.core.app.ActivityCompat;
 import androidx.lifecycle.MutableLiveData;
 
 import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationCallback;
+import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.Priority;
 import com.google.android.gms.tasks.CancellationToken;
@@ -39,6 +42,10 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.osmdroid.config.Configuration;
+import android.content.Context;
+import android.os.Environment;
+import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_CODE = 100;
@@ -50,14 +57,19 @@ public class MainActivity extends AppCompatActivity {
     private static final String API_ENDPOINT = "https://cp0yi7o5hg.execute-api.us-east-1.amazonaws.com/default/location";
     private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
     private static final int TIMEOUT_SECONDS = 30;
+    private static final long LOCATION_UPDATE_INTERVAL = 1000; // 1 second
 
     private TextView locationTextView;
     private TextView resultTextView;
     private TextView resultTextView2;
+    private TextView speedTextView; // New TextView for speed
     private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback locationCallback;
+    private static final String USER_AGENT = "com.saurabh.proximity"; // Your app's package name
     private final MutableLiveData<Location> locationLiveData = new MutableLiveData<>();
     private final OkHttpClient httpClient;
     private RoadPointFinder roadPointFinder;
+    private Location lastLocation;
 
     public MainActivity() {
         httpClient = new OkHttpClient.Builder()
@@ -71,29 +83,41 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.mainactivity);
-
+        initializeOSMDroid();
         initializeViews();
         setupLocationServices();
+        setupLocationCallback();
         setupObservers();
 
     }
+private void initializeOSMDroid() {
+        Context ctx = getApplicationContext();
+       // Configuration.getInstance().load(ctx, androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx));
+        
+        // Set user agent to prevent getting banned from the OSM servers
+        Configuration.getInstance().setUserAgentValue(USER_AGENT);
 
+        // Set the tile cache location
+        File basePath = new File(ctx.getCacheDir().getAbsolutePath(), "osmdroid");
+        Configuration.getInstance().setOsmdroidBasePath(basePath);
+        File tileCache = new File(Configuration.getInstance().getOsmdroidBasePath().getAbsolutePath(), "tile");
+        Configuration.getInstance().setOsmdroidTileCache(tileCache);
+    }
     private void initializeViews() {
         locationTextView = findViewById(R.id.locationTextView);
         resultTextView = findViewById(R.id.resultTextView);
         resultTextView2 = findViewById(R.id.resultTextView2);
+        speedTextView = findViewById(R.id.speedTextView); // Make sure to add this to your layout
 
         Button invokeButton = findViewById(R.id.invokeButton);
         invokeButton.setOnClickListener(v -> invokeLambdaFunction());
 
-        Button getLocationButton = findViewById(R.id.getLocationButton);
-        getLocationButton.setOnClickListener(v -> requestLocation());
     }
 
     private void setupLocationServices() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
     }
-
+    
     private void setupObservers() {
         locationLiveData.observe(this, location -> {
             if (location != null) {
@@ -102,12 +126,29 @@ public class MainActivity extends AppCompatActivity {
             }
         });
     }
-    private void requestLocation() {
-        if (!hasLocationPermissions()) {
-            requestLocationPermissions();
-            return;
+    private void setupLocationCallback() {
+        locationCallback = new LocationCallback() {
+            @Override
+            public void onLocationResult(@NonNull LocationResult locationResult) {
+                Location location = locationResult.getLastLocation();
+                if (location != null) {
+                    updateSpeed(location);
+                    locationLiveData.setValue(location);
+                    lastLocation = location;
+                }
+            }
+        };
+    }
+
+    private void updateSpeed(Location location) {
+        if (location.hasSpeed()) {
+            float speedMS = location.getSpeed();
+            float speedKMH = speedMS * 3.6f; // Convert m/s to km/h
+            runOnUiThread(() -> {
+                String speedText = String.format("Current Speed: %.1f km/h", speedKMH);
+                speedTextView.setText(speedText);
+            });
         }
-        getCurrentLocation();
     }
 
     private boolean hasLocationPermissions() {
@@ -127,8 +168,8 @@ public class MainActivity extends AppCompatActivity {
                 PERMISSION_CODE
         );
     }
-
-    private void getCurrentLocation() {
+    
+      private void getCurrentLocation() {
         if (!hasLocationPermissions()) {
             return;
         }
@@ -160,16 +201,45 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void updateLocationUI(Location location) {
-  // TODO HARD CODED STRINGS
-        location.setLatitude(23.25204561436272);
-        location.setLongitude(77.48521347885162);
-        String locationText = getString(R.string.location_format,
-                location.getLatitude(),
-                location.getLongitude());
-        locationTextView.setText(locationText);
+        // TODO HARD CODED STRINGS
+              location.setLatitude(23.25204561436272);
+              location.setLongitude(77.48521347885162);
+              String locationText = getString(R.string.location_format,
+                      location.getLatitude(),
+                      location.getLongitude());
+              locationTextView.setText(locationText);
+          }
+    private void startLocationUpdates() {
+        if (!hasLocationPermissions()) {
+            requestLocationPermissions();
+            return;
+        }
+
+        try {
+            LocationRequest locationRequest = new LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY)
+                    .setIntervalMillis(LOCATION_UPDATE_INTERVAL)
+                    .setMinUpdateIntervalMillis(LOCATION_UPDATE_INTERVAL)
+                    .build();
+
+            fusedLocationClient.requestLocationUpdates(locationRequest,
+                    locationCallback,
+                    getMainLooper());
+        } catch (SecurityException e) {
+            showError("Location permission required");
+        }
     }
 
-    // In your MainActivity.java/
+    @Override
+    protected void onResume() {
+        super.onResume();
+        startLocationUpdates();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        stopLocationUpdates();
+    }
     private void findNearestRoad(double latitude, double longitude) {
         RoadPointFinder roadFinder = new RoadPointFinder();
         roadFinder.getNearestRoad(latitude, longitude, new RoadPointFinder.RoadFinderCallback() {
@@ -214,8 +284,8 @@ public class MainActivity extends AppCompatActivity {
     private void invokeLambdaFunction() {
         //HARD CODED
         Location currentLocation = locationLiveData.getValue();
-        //findNearestRoad(23.252060147348807, 77.48537967398161);
-        findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
+        findNearestRoad(23.252060147348807, 77.48537967398161);
+        //findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
         if (currentLocation == null) {
             showError("No location available. Please get location first.");
             return;
@@ -251,6 +321,10 @@ public class MainActivity extends AppCompatActivity {
         }).addOnFailureListener(e -> showError("Failed to get location: " + e.getMessage()));
     }
 
+
+    private void stopLocationUpdates() {
+        fusedLocationClient.removeLocationUpdates(locationCallback);
+    }
     private void sendPostRequest(String jsonBody) {
         OkHttpClient client = new OkHttpClient();
 
@@ -315,31 +389,47 @@ public class MainActivity extends AppCompatActivity {
             showError("Location not available for map.");
             return;
         }
-
-        // Configure OsmDroid map settings
-        if (mapView == null) {
-            mapView = findViewById(R.id.mapView);
-            mapView.setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK);
-            mapView.setBuiltInZoomControls(true);
-            mapView.setMultiTouchControls(true);
+    
+        try {
+            // Configure OsmDroid map settings
+            if (mapView == null) {
+                mapView = findViewById(R.id.mapView);
+                mapView.setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK);
+                mapView.setBuiltInZoomControls(true);
+                mapView.setMultiTouchControls(true);
+    
+                // Enable hardware acceleration
+                mapView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
+    
+                // Enable tile downloading
+                mapView.setUseDataConnection(true);
+            }
+    
+            // Set the map center and zoom level
+            GeoPoint startPoint = new GeoPoint(location.getLatitude(), location.getLongitude());
+            mapView.getController().setZoom(15.0);
+            mapView.getController().setCenter(startPoint);
+    
+            // Add a marker for the current location
+            Marker marker = new Marker(mapView);
+            marker.setPosition(startPoint);
+            marker.setTitle("My Location");
+            mapView.getOverlays().add(marker);
+    
+            // Force a refresh of the map
+            mapView.invalidate();
+    
+        } catch (Exception e) {
+            showError("Error loading map: " + e.getMessage());
+            e.printStackTrace();
         }
-
-        // Set the map center and zoom level
-        GeoPoint startPoint = new GeoPoint(location.getLatitude(), location.getLongitude());
-        mapView.getController().setZoom(15.0);
-        mapView.getController().setCenter(startPoint);
-
-        // Add a marker for the current location
-        Marker marker = new Marker(mapView);
-        marker.setPosition(startPoint);
-        marker.setTitle("My Location");
-        mapView.getOverlays().clear(); // Clear any existing markers
-        mapView.getOverlays().add(marker);
     }
+    
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        stopLocationUpdates();
         httpClient.dispatcher().executorService().shutdown();
         httpClient.connectionPool().evictAll();
     }
