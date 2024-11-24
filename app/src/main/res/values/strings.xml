@@ -1,0 +1,5 @@
+<resources>
+<string name="app_name">proximity</string>
+<string name="location_format">Latitude: %1$.6f\nLongitude: %2$.6f</string>
+<string name="response_format">Response: %1$s</string>
+</resources>
