@@ -22,7 +22,7 @@ public class RoadPointFinder {
     private static final String TAG = "RoadFinder";
     private static final List<Point> predefinedPoints = new ArrayList<>();
     // HARD CODED
-    static {
+    static {  //TODO REPLACE WITH LAMBDA
         predefinedPoints.add(new Point("Raisen Road diff", 23.251858252142124, 77.48453767393227, 0.0));
     }
     private static final String OSM_API_URL = "https://nominatim.openstreetmap.org/reverse";

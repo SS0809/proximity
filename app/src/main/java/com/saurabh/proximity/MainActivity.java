@@ -284,8 +284,8 @@ private void initializeOSMDroid() {
     private void invokeLambdaFunction() {
         //HARD CODED
         Location currentLocation = locationLiveData.getValue();
-        findNearestRoad(23.252060147348807, 77.48537967398161);
-        //findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
+        //findNearestRoad(23.252060147348807, 77.48537967398161);
+        findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
         if (currentLocation == null) {
             showError("No location available. Please get location first.");
             return;
@@ -310,7 +310,7 @@ private void initializeOSMDroid() {
 
                 // Create JSON body for API request
                 String jsonBody = String.format(
-                        "{ \"latitude1\": %.6f, \"longitude1\": %.6f, \"latitude2\": 23.2563714, \"longitude2\": 77.48669 }",
+                        "{ \"action\": \"calculateDistance\", \"latitude1\": %.6f, \"longitude1\": %.6f, \"latitude2\": 23.2563714, \"longitude2\": 77.48669 }",
                         latitude, longitude
                 );
 
@@ -336,7 +336,7 @@ private void initializeOSMDroid() {
 
         // Create POST request
         Request request = new Request.Builder()
-                .url("https://cp0yi7o5hg.execute-api.us-east-1.amazonaws.com/default/location") // Replace with your API Gateway URL
+                .url(API_ENDPOINT) // Replace with your API Gateway URL
                 .post(body)
                 .build();
 
