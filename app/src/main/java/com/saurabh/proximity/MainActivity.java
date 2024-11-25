@@ -26,13 +26,20 @@ import com.google.android.gms.location.Priority;
 import com.google.android.gms.tasks.CancellationToken;
 import com.google.android.gms.tasks.OnTokenCanceledListener;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.osmdroid.config.Configuration;
 import org.osmdroid.views.MapView;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.overlay.Marker;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -42,6 +49,8 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import okhttp3.ResponseBody;
+
 import org.osmdroid.config.Configuration;
 import android.content.Context;
 import android.os.Environment;
@@ -54,6 +63,8 @@ public class MainActivity extends AppCompatActivity {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
     };
+
+    private final ExecutorService executorService = Executors.newSingleThreadExecutor();
     private static final String API_ENDPOINT = "https://cp0yi7o5hg.execute-api.us-east-1.amazonaws.com/default/location";
     private static final MediaType JSON_MEDIA_TYPE = MediaType.get("application/json; charset=utf-8");
     private static final int TIMEOUT_SECONDS = 30;
@@ -202,8 +213,8 @@ private void initializeOSMDroid() {
 
     private void updateLocationUI(Location location) {
         // TODO HARD CODED STRINGS
-              location.setLatitude(23.25204561436272);
-              location.setLongitude(77.48521347885162);
+            //  location.setLatitude(23.25204561436272);
+              // location.setLongitude(77.48521347885162);
               String locationText = getString(R.string.location_format,
                       location.getLatitude(),
                       location.getLongitude());
@@ -243,37 +254,77 @@ private void initializeOSMDroid() {
     private void findNearestRoad(double latitude, double longitude) {
         RoadPointFinder roadFinder = new RoadPointFinder();
         roadFinder.getNearestRoad(latitude, longitude, new RoadPointFinder.RoadFinderCallback() {
+
+
             @Override
             public void onSuccess(String roadName) {
-                runOnUiThread(() -> {
-                    if (roadName != null) {
-                        // Update your UI with the road name
-                        List<Point> roadPoints = getPointsForRoad(roadName);
+                if (roadName == null) {
+                    runOnUiThread(() -> showError("No road found nearby"));
+                    return;
+                }
 
-                        // Step 3: Filter points within 1 km
-                        List<Point> nearbyPoints = filterPointsByDistance(latitude, longitude, roadPoints, 1000 );
-                        // Update the map with the nearby points
-                        updateMapWithPoints(mapView, nearbyPoints);
-                        // Display nearby points
-                        if (!nearbyPoints.isEmpty()) {
-                            System.out.println("Nearby Points:");
-                            for (Point point : nearbyPoints) {
-                                System.out.println("Latitude: " + point.latitude + ", Longitude: " + point.longitude);
-                                Toast.makeText(
-                                        MainActivity.this,
-                                        "RoadName: " + point.roadName + ", Distance: " + point.distance,
-                                        Toast.LENGTH_SHORT
-                                ).show();
-                            }
-                        } else {
-                            System.out.println("No points found within 1 km.");
+                executorService.execute(() -> {
+                    // Perform network operation in a background thread
+                    List<Point> nearbyPoints = new ArrayList<>();
+                    String jsonBody = String.format(
+                            "{ \"action\": \"checkNearby\", \"latitude\": %.6f, \"longitude\": %.6f }",
+                            23.2563714, 77.48669
+                    );
+
+                    try {
+                        String response = sendPostRequestSynchronously(jsonBody);
+                        System.out.println("Raw Response: " + response);
+
+                        // Parse response
+                        JSONObject jsonResponse = new JSONObject(response);
+                        JSONArray pointsArray = jsonResponse.getJSONArray("nearbyPoints");
+                        int count = jsonResponse.getInt("count");
+                        System.out.println("Count: " + count);
+
+                        for (int i = 0; i < pointsArray.length(); i++) {
+                            JSONObject pointObject = pointsArray.getJSONObject(i);
+                            double latitude = pointObject.getDouble("latitude");
+                            double longitude = pointObject.getDouble("longitude");
+                            //String roadName1 = pointObject.getString("roadName");
+                            String roadName1 = "roadName";
+                            //double distance = pointObject.getDouble("distance");
+                            double distance = 0.1;
+                            nearbyPoints.add(new Point(roadName1, latitude, longitude, distance));
                         }
-                        resultTextView2.setText("Nearest Road: " + roadName);
-                    } else {
-                        showError("No road found nearby");
+
+                        // Print the nearby points
+                        for (Point point : nearbyPoints) {
+                            System.out.println(point);
+                        }
+
+                        // Update UI on the main thread
+                        runOnUiThread(() -> {
+                            updateMapWithPoints(mapView, nearbyPoints);
+
+                            if (!nearbyPoints.isEmpty()) {
+                                for (Point point : nearbyPoints) {
+                                    Toast.makeText(
+                                            MainActivity.this,
+                                            "Road Name: " + point.roadName + ", Distance: " + point.distance,
+                                            Toast.LENGTH_SHORT
+                                    ).show();
+                                }
+                            } else {
+                                System.out.println("No points found within 1 km.");
+                            }
+
+                            resultTextView2.setText("Nearest Road: " + roadName);
+                        });
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                        runOnUiThread(() -> showError("Network error: " + e.getMessage()));
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                        runOnUiThread(() -> showError("Parsing error: " + e.getMessage()));
                     }
                 });
             }
+
 
             @Override
             public void onFailure(String error) {
@@ -357,6 +408,77 @@ private void initializeOSMDroid() {
                 }
             }
         });
+    }
+    private String sendPostRequestSynchronously(String jsonBody) throws IOException {
+        OkHttpClient client = new OkHttpClient();
+
+        // Define MediaType for JSON
+        MediaType JSON = MediaType.get("application/json; charset=utf-8");
+
+        // Create request body
+        RequestBody body = RequestBody.create(jsonBody, JSON);
+
+        // Create POST request
+        Request request = new Request.Builder()
+                .url(API_ENDPOINT) // Replace with your API Gateway URL
+                .post(body)
+                .build();
+
+        // Execute synchronously
+        try (Response response = client.newCall(request).execute()) {
+            if (response.isSuccessful() && response.body() != null) {
+                String responseBody = response.body().string(); // Get the response as a string
+
+                // Parse the body if needed (e.g., JSON parsing)
+                return responseBody;
+            } else {
+                throw new IOException("Error: " + response.code());
+            }
+        }
+    }
+
+
+
+    private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
+    private final OkHttpClient client = new OkHttpClient();
+
+    private CompletableFuture<String> sendPostRequest2(String jsonBody) {
+        CompletableFuture<String> future = new CompletableFuture<>();
+
+        RequestBody body = RequestBody.create(jsonBody, JSON);
+        Request request = new Request.Builder()
+                .url(API_ENDPOINT)
+                .post(body)
+                .build();
+
+        client.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                future.completeExceptionally(e);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed to connect: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                runOnUiThread(() -> {
+                    try (ResponseBody responseBody = response.body()) {
+                        if (response.isSuccessful()) {
+                            String responseString = responseBody != null ? responseBody.string() : "No response body";
+                            resultTextView.setText("Response: " + responseString);
+                            future.complete(responseString);
+                        } else {
+                            Toast.makeText(MainActivity.this, "Error: " + response.code(), Toast.LENGTH_SHORT).show();
+                            future.completeExceptionally(new IOException("Error: " + response.code()));
+                        }
+                    } catch (IOException e) {
+                        future.completeExceptionally(e);
+                        Toast.makeText(MainActivity.this, "Error reading response: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
+        });
+
+        return future;
     }
 
     private void showError(String message) {

@@ -211,4 +211,11 @@ class Point {
         this.longitude = longitude;
         this.distance = distance;
     }
+    @Override
+    public String toString() {
+        return "Point{" +
+                "latitude=" + latitude +
+                ", longitude=" + longitude +
+                '}';
+    }
 }
