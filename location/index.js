@@ -1,120 +1,251 @@
 const { calculateDistance } = require('./distanceCalculator');
 const { createClient } = require('redis');
+const fs = require('fs');
+const path = require('path');
 
-// Global Redis client variable
+// Configuration constants
+const CONFIG = {
+    REDIS: {
+        HOST:  'redis-16274.c57.us-east-1-4.ec2.redns.redis-cloud.com',
+        PORT:16274,
+        PASSWORD: 'KQDUcWErbcAbX2kcpvrhz1Bp7zNwPsyb',
+        connectTimeout: 10000 ,
+    },
+    DEFAULTS: {
+        SEARCH_RADIUS_KM: 2,
+        COORDINATE_PRECISION: 6
+    }
+};
+
+// Redis client singleton
 let redisClient;
 
-// Function to get or create Redis client
+// Validation functions
+const validateRequestBody = (body) => {
+    if (!body) {
+        throw new Error('Request body is empty');
+    }
+
+    let parsed;
+    try {
+        parsed = typeof body === 'string' ? JSON.parse(body) : body;
+    } catch (e) {
+        throw new Error(`Invalid JSON format: ${e.message}`);
+    }
+
+    if (!parsed.action) {
+        throw new Error('Missing required field: action');
+    }
+
+    return parsed;
+};
+
+const isValidCoordinate = (coord) => {
+    return typeof coord === 'number' && 
+           !isNaN(coord) && 
+           isFinite(coord) &&
+           Math.abs(coord) <= 180;
+};
+
+const validateCoordinates = (lat, lon) => {
+    if (!isValidCoordinate(lat) || !isValidCoordinate(lon)) {
+        throw new Error('Invalid coordinates provided');
+    }
+    if (Math.abs(lat) > 90) {
+        throw new Error('Latitude must be between -90 and 90 degrees');
+    }
+};
+
+// Redis client initialization
 const getRedisClient = async () => {
     if (!redisClient) {
         redisClient = createClient({
-            password: 'KQDUcWErbcAbX2kcpvrhz1Bp7zNwPsyb',
+            password: CONFIG.REDIS.PASSWORD,
             socket: {
-                host: 'redis-16274.c57.us-east-1-4.ec2.redns.redis-cloud.com',
-                port: 16274,
+                host: CONFIG.REDIS.HOST,
+                port: CONFIG.REDIS.PORT,
             },
+            retry_strategy: (options) => {
+                if (options.total_retry_time > 1000 * 60 * 60) {
+                    return new Error('Retry time exhausted');
+                }
+                return Math.min(options.attempt * 100, 3000);
+            }
         });
 
-        redisClient.on('error', (err) => console.error('Redis Client Error', err));
+        redisClient.on('error', (err) => {
+            console.error('Redis Client Error:', err);
+            redisClient = null;
+        });
 
         await redisClient.connect();
     }
     return redisClient;
 };
 
-exports.handler = async (event) => {
-    try {
-        // Initialize Redis client
-        const client = await getRedisClient();
+// Action handlers
+const handleCalculateDistance = async (params) => {
+    const { latitude1, longitude1, latitude2, longitude2 } = params;
+    
+    // Convert string coordinates to numbers
+    const coords = {
+        lat1: parseFloat(latitude1),
+        lon1: parseFloat(longitude1),
+        lat2: parseFloat(latitude2),
+        lon2: parseFloat(longitude2)
+    };
 
-        const { action, latitude, longitude } = JSON.parse(event.body);
+    // Validate coordinates
+    [
+        [coords.lat1, coords.lon1],
+        [coords.lat2, coords.lon2]
+    ].forEach(([lat, lon]) => validateCoordinates(lat, lon));
 
-        if (!action) {
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ error: 'Missing action parameter' }),
-            };
-        }
+    const distance = calculateDistance(
+        coords.lat1, 
+        coords.lon1, 
+        coords.lat2, 
+        coords.lon2
+    );
+    
+    return {
+        distance: Number(distance.toFixed(CONFIG.DEFAULTS.COORDINATE_PRECISION)),
+        unit: 'km'
+    };
+};
 
-        if (action === 'calculateDistance') {
-            // Parse input coordinates for distance calculation
-            const { latitude1, longitude1, latitude2, longitude2 } = JSON.parse(event.body);
+const handleCheckNearby = async (params, client) => {
+    const lat = parseFloat(params.latitude);
+    const lon = parseFloat(params.longitude);
+    
+    validateCoordinates(lat, lon);
 
-            if (
-                latitude1 === undefined || longitude1 === undefined ||
-                latitude2 === undefined || longitude2 === undefined
-            ) {
-                return {
-                    statusCode: 400,
-                    body: JSON.stringify({ error: 'Missing required parameters' }),
-                };
-            }
-
-            // Calculate distance
-            const distance = calculateDistance(latitude1, longitude1, latitude2, longitude2);
-
-            // Return the response
-            return {
-                statusCode: 200,
-                body: JSON.stringify({
-                    distance: distance.toFixed(2), // Distance in kilometers rounded to 2 decimal places
-                    unit: 'km',
-                }),
-            };
-        } else if (action === 'checkNearby') {
-            if (latitude === undefined || longitude === undefined) {
-                return {
-                    statusCode: 400,
-                    body: JSON.stringify({ error: 'Missing latitude or longitude' }),
-                };
-            }
-
-            // Retrieve stored points from Redis
-            const storedPoints = await client.lRange('storedPoints', 0, -1); // Assuming stored points are in a list
-            if (!storedPoints || storedPoints.length === 0) {
-                return {
-                    statusCode: 404,
-                    body: JSON.stringify({ error: 'No stored points found' }),
-                };
-            }
-
-            // Parse and check distances
-            const withinRadius = [];
-            const userPoint = { latitude: parseFloat(latitude), longitude: parseFloat(longitude) };
-
-            for (const point of storedPoints) {
-                const parsedPoint = JSON.parse(point); // Assuming points are stored as JSON strings
-                const distance = calculateDistance(
-                    userPoint.latitude,
-                    userPoint.longitude,
-                    parsedPoint.latitude,
-                    parsedPoint.longitude
-                );
-
-                if (distance <= 2) {
-                    withinRadius.push(parsedPoint);
-                }
-            }
-
-            // Return points within 2 km
-            return {
-                statusCode: 200,
-                body: JSON.stringify({
-                    nearbyPoints: withinRadius,
-                    count: withinRadius.length,
-                }),
-            };
-        } else {
-            return {
-                statusCode: 400,
-                body: JSON.stringify({ error: 'Invalid action' }),
-            };
-        }
-    } catch (error) {
-        console.error('Error:', error);
+    const storedPoints = await client.lRange('storedPoints', 0, -1);
+    if (!storedPoints?.length) {
         return {
-            statusCode: 500,
-            body: JSON.stringify({ error: 'Internal Server Error' }),
+            nearbyPoints: [],
+            count: 0
+        };
+    }
+
+    const withinRadius = storedPoints
+        .map(point => {
+            try {
+                return JSON.parse(point);
+            } catch (e) {
+                console.warn('Invalid point data in Redis:', point);
+                return null;
+            }
+        })
+        .filter(point => point !== null)
+        .filter(point => {
+            const distance = calculateDistance(
+                lat,
+                lon,
+                parseFloat(point.latitude),
+                parseFloat(point.longitude)
+            );
+            return distance <= CONFIG.DEFAULTS.SEARCH_RADIUS_KM;
+        });
+
+    return {
+        nearbyPoints: withinRadius,
+        count: withinRadius.length
+    };
+};
+const handleStoreRoadPoint = async (params, client) => {
+    const { roadName, latitude, longitude, distance } = params;
+    
+    // Validate coordinates
+    [
+        [parseFloat(latitude), parseFloat(longitude)]
+    ].forEach(([lat, lon]) => validateCoordinates(lat, lon));
+
+    // Create road point object
+    const roadPoint = {
+        roadName,
+        latitude: parseFloat(latitude).toFixed(CONFIG.DEFAULTS.COORDINATE_PRECISION),
+        longitude: parseFloat(longitude).toFixed(CONFIG.DEFAULTS.COORDINATE_PRECISION),
+        distance: parseFloat(distance).toFixed(1),
+        timestamp: new Date().toISOString()
+    };
+
+    // Store the point in Redis list
+    await client.lPush('storedPoints', JSON.stringify(roadPoint));
+
+    return {
+        message: 'Road point stored successfully',
+        point: roadPoint
+    };
+};
+
+// Main handler
+exports.handler = async (event) => {
+        if (event.httpMethod === 'GET') {
+            const indexHTML = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+            return {
+                statusCode: 200,
+                headers: {
+                    'Content-Type': 'text/html',
+                    'Cache-Control': 'no-store'
+                },
+                body: indexHTML
+            };
+        }
+    try {
+        // Log incoming request for debugging
+        console.log('Incoming request:', {
+            body: event.body,
+            headers: event.headers
+        });
+
+        // Validate and parse request body
+        const params = validateRequestBody(event.body);
+        
+        const client = await getRedisClient();
+        let result;
+
+        switch (params.action) {
+            case 'calculateDistance':
+                result = await handleCalculateDistance(params);
+                break;
+            case 'checkNearby':
+                result = await handleCheckNearby(params, client);
+                break;
+            case 'storeRoadPoint':
+                result = await handleStoreRoadPoint(params, client);
+                break;
+            default:
+                throw new Error(`Invalid action: ${params.action}`);
+        }
+
+        return {
+            statusCode: 200,
+            headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store'
+            },
+            body: JSON.stringify(result)
+        };
+
+    } catch (error) {
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack
+        });
+        
+        const statusCode = error.message.includes('Invalid') ? 400 : 500;
+        
+        return {
+            statusCode,
+            headers: {
+                'Content-Type': 'application/json',
+                'Cache-Control': 'no-store'
+            },
+            body: JSON.stringify({
+                error: statusCode === 400 ? error.message : 'Internal Server Error',
+                details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            })
         };
     }
 };

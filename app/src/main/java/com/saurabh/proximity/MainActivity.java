@@ -8,6 +8,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.location.Location;
 import android.os.Bundle;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -101,10 +102,10 @@ public class MainActivity extends AppCompatActivity {
         setupObservers();
 
     }
-private void initializeOSMDroid() {
+    private void initializeOSMDroid() {
         Context ctx = getApplicationContext();
-       // Configuration.getInstance().load(ctx, androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx));
-        
+        // Configuration.getInstance().load(ctx, androidx.preference.PreferenceManager.getDefaultSharedPreferences(ctx));
+
         // Set user agent to prevent getting banned from the OSM servers
         Configuration.getInstance().setUserAgentValue(USER_AGENT);
 
@@ -128,7 +129,7 @@ private void initializeOSMDroid() {
     private void setupLocationServices() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
     }
-    
+
     private void setupObservers() {
         locationLiveData.observe(this, location -> {
             if (location != null) {
@@ -146,21 +147,40 @@ private void initializeOSMDroid() {
                     updateSpeed(location);
                     locationLiveData.setValue(location);
                     lastLocation = location;
+                } else {
+                    Log.w("LocationCallback", "Received null location");
                 }
             }
         };
     }
+    private long lastUpdateTime = 0;
+    private static final long UPDATE_INTERVAL = 2000; // 2 seconds
 
     private void updateSpeed(Location location) {
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastUpdateTime < UPDATE_INTERVAL) {
+            return; // Skip update
+        }
+        lastUpdateTime = currentTime;
+
+        if (location == null) {
+            runOnUiThread(() -> speedTextView.setText("Speed unavailable"));
+            return;
+        }
+
         if (location.hasSpeed()) {
             float speedMS = location.getSpeed();
-            float speedKMH = speedMS * 3.6f; // Convert m/s to km/h
+            float speedKMH = speedMS * 3.6f;
             runOnUiThread(() -> {
                 String speedText = String.format("Current Speed: %.1f km/h", speedKMH);
                 speedTextView.setText(speedText);
             });
+        } else {
+            runOnUiThread(() -> speedTextView.setText("Speed data not available"));
         }
     }
+
+
 
     private boolean hasLocationPermissions() {
         for (String permission : REQUIRED_PERMISSIONS) {
@@ -179,8 +199,8 @@ private void initializeOSMDroid() {
                 PERMISSION_CODE
         );
     }
-    
-      private void getCurrentLocation() {
+
+    private void getCurrentLocation() {
         if (!hasLocationPermissions()) {
             return;
         }
@@ -213,13 +233,13 @@ private void initializeOSMDroid() {
 
     private void updateLocationUI(Location location) {
         // TODO HARD CODED STRINGS
-            //  location.setLatitude(23.25204561436272);
-              // location.setLongitude(77.48521347885162);
-              String locationText = getString(R.string.location_format,
-                      location.getLatitude(),
-                      location.getLongitude());
-              locationTextView.setText(locationText);
-          }
+        //  location.setLatitude(23.25204561436272);
+        // location.setLongitude(77.48521347885162);
+        String locationText = getString(R.string.location_format,
+                location.getLatitude(),
+                location.getLongitude());
+        locationTextView.setText(locationText);
+    }
     private void startLocationUpdates() {
         if (!hasLocationPermissions()) {
             requestLocationPermissions();
@@ -268,51 +288,31 @@ private void initializeOSMDroid() {
                     List<Point> nearbyPoints = new ArrayList<>();
                     String jsonBody = String.format(
                             "{ \"action\": \"checkNearby\", \"latitude\": %.6f, \"longitude\": %.6f }",
-                            23.2563714, 77.48669
+                           latitude,longitude
                     );
+                    // HARD CODED
+                    // 23.2563714, 77.48669
 
                     try {
-                        String response = sendPostRequestSynchronously(jsonBody);
-                        System.out.println("Raw Response: " + response);
-
-                        // Parse response
+                        String response = checknearbypointsbyredis(jsonBody);
                         JSONObject jsonResponse = new JSONObject(response);
                         JSONArray pointsArray = jsonResponse.getJSONArray("nearbyPoints");
-                        int count = jsonResponse.getInt("count");
-                        System.out.println("Count: " + count);
-
                         for (int i = 0; i < pointsArray.length(); i++) {
                             JSONObject pointObject = pointsArray.getJSONObject(i);
                             double latitude = pointObject.getDouble("latitude");
                             double longitude = pointObject.getDouble("longitude");
-                            //String roadName1 = pointObject.getString("roadName");
-                            String roadName1 = "roadName";
-                            //double distance = pointObject.getDouble("distance");
-                            double distance = 0.1;
+                            String roadName1 = pointObject.getString("roadName");
+                            double distance = pointObject.getDouble("distance");// TODO unused
                             nearbyPoints.add(new Point(roadName1, latitude, longitude, distance));
                         }
-
-                        // Print the nearby points
-                        for (Point point : nearbyPoints) {
-                            System.out.println(point);
-                        }
-
-                        // Update UI on the main thread
+                        String locationText = "Latitude: " + nearbyPoints.get(0).latitude + "\nLongitude: " + nearbyPoints.get(0).longitude;
+                        locationTextView.setText(locationText);
+                        sendPostRequest(String.format(
+                                "{ \"action\": \"calculateDistance\", \"latitude1\": %.6f, \"longitude1\": %.6f, \"latitude2\": "+latitude+", \"longitude2\":"+longitude+" }",
+                                nearbyPoints.get(0).latitude, nearbyPoints.get(0).longitude
+                        ));
                         runOnUiThread(() -> {
                             updateMapWithPoints(mapView, nearbyPoints);
-
-                            if (!nearbyPoints.isEmpty()) {
-                                for (Point point : nearbyPoints) {
-                                    Toast.makeText(
-                                            MainActivity.this,
-                                            "Road Name: " + point.roadName + ", Distance: " + point.distance,
-                                            Toast.LENGTH_SHORT
-                                    ).show();
-                                }
-                            } else {
-                                System.out.println("No points found within 1 km.");
-                            }
-
                             resultTextView2.setText("Nearest Road: " + roadName);
                         });
                     } catch (IOException e) {
@@ -335,8 +335,7 @@ private void initializeOSMDroid() {
     private void invokeLambdaFunction() {
         //HARD CODED
         Location currentLocation = locationLiveData.getValue();
-        //findNearestRoad(23.252060147348807, 77.48537967398161);
-        findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
+
         if (currentLocation == null) {
             showError("No location available. Please get location first.");
             return;
@@ -349,27 +348,8 @@ private void initializeOSMDroid() {
             return;
         }
 
-        // Fetch the last known location
-        fusedLocationClient.getLastLocation().addOnSuccessListener(location -> {
-            if (location != null) {
-                double latitude = location.getLatitude();
-                double longitude = location.getLongitude();
-
-                // Update UI with the current location
-                String locationText = "Latitude: " + latitude + "\nLongitude: " + longitude;
-                locationTextView.setText(locationText);
-
-                // Create JSON body for API request
-                String jsonBody = String.format(
-                        "{ \"action\": \"calculateDistance\", \"latitude1\": %.6f, \"longitude1\": %.6f, \"latitude2\": 23.2563714, \"longitude2\": 77.48669 }",
-                        latitude, longitude
-                );
-
-                sendPostRequest(jsonBody);
-            } else {
-                showError("Unable to fetch location. Please try again.");
-            }
-        }).addOnFailureListener(e -> showError("Failed to get location: " + e.getMessage()));
+        //findNearestRoad(23.252060147348807, 77.48537967398161);
+        findNearestRoad(currentLocation.getLatitude(), currentLocation.getLongitude());
     }
 
 
@@ -402,14 +382,22 @@ private void initializeOSMDroid() {
             public void onResponse(Call call, Response response) throws IOException {
                 if (response.isSuccessful()) {
                     String responseBody = response.body() != null ? response.body().string() : "No response body";
-                    runOnUiThread(() -> resultTextView.setText("Response: " + responseBody));
+                    JSONObject jsonResponse = null;
+                    try {
+                        jsonResponse = new JSONObject(responseBody);
+                    } catch (JSONException e) {
+                        throw new RuntimeException(e);
+                    }
+                    String distance = jsonResponse.optString("distance", "N/A");
+                    String unit = jsonResponse.optString("unit", "");
+                    runOnUiThread(() -> resultTextView.setText("Distance: "+distance+" "+unit));
                 } else {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this, "Error: " + response.code(), Toast.LENGTH_SHORT).show());
                 }
             }
         });
     }
-    private String sendPostRequestSynchronously(String jsonBody) throws IOException {
+    private String checknearbypointsbyredis(String jsonBody) throws IOException {
         OkHttpClient client = new OkHttpClient();
 
         // Define MediaType for JSON
@@ -441,46 +429,6 @@ private void initializeOSMDroid() {
 
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
     private final OkHttpClient client = new OkHttpClient();
-
-    private CompletableFuture<String> sendPostRequest2(String jsonBody) {
-        CompletableFuture<String> future = new CompletableFuture<>();
-
-        RequestBody body = RequestBody.create(jsonBody, JSON);
-        Request request = new Request.Builder()
-                .url(API_ENDPOINT)
-                .post(body)
-                .build();
-
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                future.completeExceptionally(e);
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "Failed to connect: " + e.getMessage(), Toast.LENGTH_SHORT).show());
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) {
-                runOnUiThread(() -> {
-                    try (ResponseBody responseBody = response.body()) {
-                        if (response.isSuccessful()) {
-                            String responseString = responseBody != null ? responseBody.string() : "No response body";
-                            resultTextView.setText("Response: " + responseString);
-                            future.complete(responseString);
-                        } else {
-                            Toast.makeText(MainActivity.this, "Error: " + response.code(), Toast.LENGTH_SHORT).show();
-                            future.completeExceptionally(new IOException("Error: " + response.code()));
-                        }
-                    } catch (IOException e) {
-                        future.completeExceptionally(e);
-                        Toast.makeText(MainActivity.this, "Error reading response: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    }
-                });
-            }
-        });
-
-        return future;
-    }
-
     private void showError(String message) {
         runOnUiThread(() ->
                 Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
@@ -511,7 +459,7 @@ private void initializeOSMDroid() {
             showError("Location not available for map.");
             return;
         }
-    
+
         try {
             // Configure OsmDroid map settings
             if (mapView == null) {
@@ -519,34 +467,34 @@ private void initializeOSMDroid() {
                 mapView.setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK);
                 mapView.setBuiltInZoomControls(true);
                 mapView.setMultiTouchControls(true);
-    
+
                 // Enable hardware acceleration
                 mapView.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null);
-    
+
                 // Enable tile downloading
                 mapView.setUseDataConnection(true);
             }
-    
+
             // Set the map center and zoom level
             GeoPoint startPoint = new GeoPoint(location.getLatitude(), location.getLongitude());
             mapView.getController().setZoom(15.0);
             mapView.getController().setCenter(startPoint);
-    
+
             // Add a marker for the current location
             Marker marker = new Marker(mapView);
             marker.setPosition(startPoint);
             marker.setTitle("My Location");
             mapView.getOverlays().add(marker);
-    
+
             // Force a refresh of the map
             mapView.invalidate();
-    
+
         } catch (Exception e) {
             showError("Error loading map: " + e.getMessage());
             e.printStackTrace();
         }
     }
-    
+
 
     @Override
     protected void onDestroy() {
